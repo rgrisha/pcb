@@ -5,8 +5,7 @@ png2gcode - raster a PNG into laser G-code for PCB paint burning.
 White pixels = laser ON (paint gets burned off -> copper gets etched).
 Black pixels = laser OFF (paint stays -> copper stays).
 
-The image is scanned row by row (serpentine by default), and the whole
-raster is repeated --passes times (default 3). Each row is split
+The image is scanned row by row (serpentine by default). Each row is split
 into runs of consecutive white pixels; every run becomes one G1 burn move,
 gaps become G0 travel moves.
 
@@ -49,10 +48,27 @@ def fmt(v):
     return "0" if s in ("-0", "") else s
 
 
-def emit_pass(mask, px, line_pitch, n_lines, height_mm, args, emit, cur, stats):
-    """Emit one full raster of the image. Returns the final head position."""
-    h = mask.shape[0]
+def generate(mask, px, args):
+    h, w = mask.shape
+    width_mm, height_mm = w * px, h * px
+    line_pitch = args.line_pitch or px
+    n_lines = max(1, int(round(height_mm / line_pitch)))
+
+    out = []
+    emit = out.append
+    emit(f"; png2gcode: {args.input}")
+    emit(f"; image {w}x{h}px, pixel {fmt(px)}mm, size {fmt(width_mm)}x{fmt(height_mm)}mm")
+    emit(f"; line pitch {fmt(line_pitch)}mm, {n_lines} lines, power S{args.power}, feed F{args.feed}")
+    emit("G21 ; mm")
+    emit("G90 ; absolute")
+    emit("M5")
+    emit(f"G0 F{args.travel_feed}")
+    emit(f"M4 S0 ; dynamic laser mode, off until G1")
+
+    burn_len = travel_len = 0.0
+    cur = (0.0, 0.0)
     left_to_right = True
+
     for i in range(n_lines):
         # Line i sits at the centre of its band, measured from the bottom edge.
         y = (i + 0.5) * line_pitch
@@ -75,49 +91,22 @@ def emit_pass(mask, px, line_pitch, n_lines, height_mm, args, emit, cur, stats):
             direction = 1 if x1 > x0 else -1
             xs = x0 - direction * args.overscan
             xs_abs, ys_abs = xs + args.x_offset, y + args.y_offset
-            stats["travel"] += np.hypot(xs_abs - cur[0], ys_abs - cur[1])
+            travel_len += np.hypot(xs_abs - cur[0], ys_abs - cur[1])
             emit(f"G0 X{fmt(xs_abs)} Y{fmt(ys_abs)}")
             if args.overscan:
                 # Get up to speed with the laser off before the burn starts.
                 emit(f"G1 X{fmt(x0 + args.x_offset)} S0 F{args.feed}")
             emit(f"G1 X{fmt(x1 + args.x_offset)} S{args.power} F{args.feed}")
-            stats["burn"] += abs(x1 - x0)
+            burn_len += abs(x1 - x0)
             cur = (x1 + args.x_offset, ys_abs)
 
         if args.serpentine:
             left_to_right = not left_to_right
-    return cur
-
-
-def generate(mask, px, args):
-    h, w = mask.shape
-    width_mm, height_mm = w * px, h * px
-    line_pitch = args.line_pitch or px
-    n_lines = max(1, int(round(height_mm / line_pitch)))
-
-    out = []
-    emit = out.append
-    emit(f"; png2gcode: {args.input}")
-    emit(f"; image {w}x{h}px, pixel {fmt(px)}mm, size {fmt(width_mm)}x{fmt(height_mm)}mm")
-    emit(f"; line pitch {fmt(line_pitch)}mm, {n_lines} lines, power S{args.power}, feed F{args.feed}, {args.passes} passes")
-    emit("G21 ; mm")
-    emit("G90 ; absolute")
-    emit("M5")
-    emit(f"G0 F{args.travel_feed}")
-    emit(f"M4 S0 ; dynamic laser mode, off until G1")
-
-    stats = {"burn": 0.0, "travel": 0.0}
-    cur = (0.0, 0.0)
-
-    for pass_no in range(1, args.passes + 1):
-        emit(f"; pass {pass_no}/{args.passes}")
-        cur = emit_pass(mask, px, line_pitch, n_lines, height_mm, args, emit, cur, stats)
 
     emit("M5")
     emit("G0 X0 Y0")
     emit("M2")
 
-    burn_len, travel_len = stats["burn"], stats["travel"]
     t_min = burn_len / args.feed + travel_len / args.travel_feed
     emit(f"; burn {fmt(burn_len)}mm, travel {fmt(travel_len)}mm, ~{t_min:.1f} min (no accel)")
     return out, width_mm, height_mm, t_min
@@ -135,7 +124,6 @@ def main():
     p.add_argument("--power", type=int, default=1000, help="laser S value while burning (default 1000)")
     p.add_argument("--feed", type=float, default=1500, help="burn feed mm/min (default 1500)")
     p.add_argument("--travel-feed", type=float, default=3000, help="travel feed mm/min, informational for G0 (default 3000)")
-    p.add_argument("--passes", type=int, default=3, help="times to repeat the whole raster (default 3)")
     p.add_argument("--threshold", type=int, default=128, help="gray >= threshold counts as white (default 128)")
     p.add_argument("--invert", action="store_true", help="burn black pixels instead of white")
     p.add_argument("--mirror", action="store_true", help="mirror horizontally (bottom layer / toner-style)")
@@ -144,9 +132,6 @@ def main():
     p.add_argument("--x-offset", type=float, default=0.0)
     p.add_argument("--y-offset", type=float, default=0.0)
     args = p.parse_args()
-
-    if args.passes < 1:
-        sys.exit("error: --passes must be at least 1")
 
     mask, png_dpi = load_mask(args.input, args.threshold, args.invert)
     h, w = mask.shape
@@ -171,7 +156,7 @@ def main():
         sys.stdout.write(text)
 
     on = mask.mean() * 100
-    print(f"{w}x{h}px -> {wmm:.2f}x{hmm:.2f}mm, {on:.1f}% burned, {args.passes} passes, ~{t_min:.1f} min",
+    print(f"{w}x{h}px -> {wmm:.2f}x{hmm:.2f}mm, {on:.1f}% burned, ~{t_min:.1f} min",
           file=sys.stderr)
 
 
