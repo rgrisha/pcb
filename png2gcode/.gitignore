@@ -3,3 +3,9 @@
 *.gcode
 *.xcf
 *.svg
+target/
+.lein-*
+.nrepl-port
+*.swp
+
+data/**
