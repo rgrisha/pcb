@@ -74,7 +74,6 @@ def generate(mask, px, a):
         "G21",
         "G90",
         "M5",
-        f"G0 F{a.travel}",
         f"{'M3' if a.m3 else 'M4'} S0",
     ]
 
@@ -100,7 +99,8 @@ def generate(mask, px, a):
             groups[-1].append(seg)
 
         for grp in groups:
-            g.append(f"G0 X{num(grp[0][0] - d * a.overscan)} Y{num(y)}")
+            # Travel as laser-off G1: GRBL runs G0 at max rate ($110) and ignores F.
+            g.append(f"G1 X{num(grp[0][0] - d * a.overscan)} Y{num(y)} S0 F{a.travel}")
             g.append(f"G1 X{num(grp[0][0])} S0 F{a.feed}")
             for j, (s, e) in enumerate(grp):
                 if j:
@@ -110,7 +110,7 @@ def generate(mask, px, a):
 
         forward = not forward
 
-    g += ["M5", "G0 X0 Y0", "M2"]
+    g += [f"G1 X0 Y0 S0 F{a.travel}", "M5", "M2"]
     return g, burned_lines, width, height
 
 
@@ -126,7 +126,7 @@ def main():
     p.add_argument("--line-pitch", type=float, default=0.1, help="mm between scan lines (default 0.1)")
     p.add_argument("--power", type=int, default=1000, help="laser S value while burning (default 1000, GRBL $30)")
     p.add_argument("--feed", type=int, default=1000, help="burn feed mm/min (default 1000)")
-    p.add_argument("--travel", type=int, default=3000, help="travel feed mm/min (default 3000)")
+    p.add_argument("--travel", type=int, default=3000, help="travel feed mm/min between burns (default 3000)")
     p.add_argument("--m3", action="store_true",
                    help="constant power M3 instead of dynamic M4 (M4 scales power with speed)")
     p.add_argument("--overscan", type=float, default=2.0, help="mm of laser-off run-up on each side (default 2)")
