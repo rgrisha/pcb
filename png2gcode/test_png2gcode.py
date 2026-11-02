@@ -149,6 +149,16 @@ def test_same_feed_travel_with_no_overscan():
         "G1 X10 S300 F500",
     ]
 
+def test_same_feed_travel_with_overscan():
+    assert gcode("2b2w3b3w4b", power=300, feed=500, travel=500, overscan=2) == [
+        "G1 X0 Y0.5 S0 F500",
+        "G1 X2 S0 F500",
+        "G1 X4 S300",
+        "G1 X7 S0",
+        "G1 X10 S300",
+        "G1 X12 S0",
+    ]
+
 
 
 def test_line_pitch_samples_rows():
