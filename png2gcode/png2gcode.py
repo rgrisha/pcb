@@ -101,12 +101,17 @@ def generate(mask, px, a):
         for grp in groups:
             # Travel as laser-off G1: GRBL runs G0 at max rate ($110) and ignores F.
             g.append(f"G1 X{num(grp[0][0] - d * a.overscan)} Y{num(y)} S0 F{a.travel}")
-            g.append(f"G1 X{num(grp[0][0])} S0 F{a.feed}")
+            # Without overscan the run-up and run-out don't move, so skip them
+            # and set the burn feed on the first burn move instead.
+            if a.overscan:
+                g.append(f"G1 X{num(grp[0][0])} S0 F{a.feed}")
             for j, (s, e) in enumerate(grp):
                 if j:
                     g.append(f"G1 X{num(s)} S0")
-                g.append(f"G1 X{num(e)} S{a.power}")
-            g.append(f"G1 X{num(grp[-1][1] + d * a.overscan)} S0")
+                feed = f" F{a.feed}" if j == 0 and not a.overscan else ""
+                g.append(f"G1 X{num(e)} S{a.power}{feed}")
+            if a.overscan:
+                g.append(f"G1 X{num(grp[-1][1] + d * a.overscan)} S0")
 
         forward = not forward
 

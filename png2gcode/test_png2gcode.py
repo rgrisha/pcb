@@ -135,6 +135,22 @@ def test_power_feed_travel_overscan_options():
     ]
 
 
+def test_power_feed_travel_no_overscan():
+    assert gcode("1b2w", power=300, feed=500, travel=1200, overscan=0) == [
+        "G1 X1 Y0.5 S0 F1200",
+        "G1 X3 S300 F500",
+    ]
+
+def test_same_feed_travel_with_no_overscan():
+    assert gcode("2b2w3b3w4b", power=300, feed=500, travel=500, overscan=0) == [
+        "G1 X2 Y0.5 S0 F500",
+        "G1 X4 S300 F500",
+        "G1 X7 Y0.5 S0 F500",
+        "G1 X10 S300 F500",
+    ]
+
+
+
 def test_line_pitch_samples_rows():
     # 4 rows at 2 mm pitch -> lines at Y1 and Y3, sampling rows 2 and 0 from top
     assert gcode("1w3b", "4b", "3b1w", "4b", line_pitch=2.0) == [
@@ -147,7 +163,6 @@ def test_line_pitch_samples_rows():
         "G1 X0 S1000",
         "G1 X-2 S0",
     ]
-
 
 def test_header_and_footer():
     lines, burned, width, height = png2gcode.generate(image("2w") == 255, 1.0, args())
