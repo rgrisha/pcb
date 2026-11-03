@@ -221,3 +221,11 @@ def test_load_rejects_non_black_white(tmp_path, pixels, mode, capsys):
         png2gcode.load_mask(save(tmp_path, pixels, mode), invert=False)
     assert e.value.code == 1
     assert "not strictly black/white" in capsys.readouterr().err
+
+
+# --- png2spec helper -------------------------------------------------------
+
+@pytest.mark.parametrize("s", ["4b5w6b7w", "3w", "1b", "1w1b1w1b"])
+def test_png2spec_round_trip(s):
+    import png2spec
+    assert png2spec.spec(row(s) == 255) == s
