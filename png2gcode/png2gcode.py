@@ -69,7 +69,8 @@ def generate(mask, px, a):
         f"; png2gcode {a.input}",
         f"; {w}x{h} px, pixel {num(px)} mm, size {num(width)} x {num(height)} mm",
         f"; burn {'black' if a.invert else 'white'}, line pitch {num(a.line_pitch)} mm, "
-        f"S{a.power} F{a.feed}, overscan {num(a.overscan)} mm, {'M3' if a.m3 else 'M4'}",
+        f"S{a.power} F{a.feed}, overscan {num(a.overscan)} mm, {'M3' if a.m3 else 'M4'}, "
+        f"line repeat {a.line_repeat}",
         "; origin X0 Y0 = bottom-left of image; needs GRBL laser mode ($32=1)",
         "G21",
         "G90",
@@ -79,41 +80,50 @@ def generate(mask, px, a):
 
     forward = True
     burned_lines = 0
+    pos = None                                # (x, y) as written in the G-code
     for i in range(n_lines):
         y = (i + 0.5) * a.line_pitch          # centre of this line, from bottom
         row = mask[h - 1 - min(h - 1, int(y / px))]
-        segs = [(s * px, e * px) for s, e in runs(row)]
-        if not segs:
+        runs_mm = [(s * px, e * px) for s, e in runs(row)]
+        if not runs_mm:
             continue
         burned_lines += 1
 
-        if not forward:
-            segs = [(e, s) for s, e in reversed(segs)]
-        d = 1 if forward else -1
+        # Burn the line --line-repeat times, alternating direction.
+        for _ in range(a.line_repeat):
+            if forward:
+                segs, d = runs_mm, 1
+            else:
+                segs, d = [(e, s) for s, e in reversed(runs_mm)], -1
 
-        # Group runs whose gap is short enough to cross at burn speed with S0.
-        groups = [[segs[0]]]
-        for seg in segs[1:]:
-            if abs(seg[0] - groups[-1][-1][1]) > 2 * a.overscan:
-                groups.append([])
-            groups[-1].append(seg)
+            # Group runs whose gap is short enough to cross at burn speed with S0.
+            groups = [[segs[0]]]
+            for seg in segs[1:]:
+                if abs(seg[0] - groups[-1][-1][1]) > 2 * a.overscan:
+                    groups.append([])
+                groups[-1].append(seg)
 
-        for grp in groups:
-            # Travel as laser-off G1: GRBL runs G0 at max rate ($110) and ignores F.
-            g.append(f"G1 X{num(grp[0][0] - d * a.overscan)} Y{num(y)} S0 F{a.travel}")
-            # Without overscan the run-up and run-out don't move, so skip them
-            # and set the burn feed on the first burn move instead.
-            if a.overscan:
-                g.append(f"G1 X{num(grp[0][0])} S0 F{a.feed}")
-            for j, (s, e) in enumerate(grp):
-                if j:
-                    g.append(f"G1 X{num(s)} S0")
-                feed = f" F{a.feed}" if j == 0 and not a.overscan else ""
-                g.append(f"G1 X{num(e)} S{a.power}{feed}")
-            if a.overscan:
-                g.append(f"G1 X{num(grp[-1][1] + d * a.overscan)} S0")
+            for grp in groups:
+                # Travel as laser-off G1: GRBL runs G0 at max rate ($110) and ignores F.
+                # Skipped when already there, e.g. turning around for a repeat.
+                start = (num(grp[0][0] - d * a.overscan), num(y))
+                if start != pos:
+                    g.append(f"G1 X{start[0]} Y{start[1]} S0 F{a.travel}")
+                # Without overscan the run-up and run-out don't move, so skip them
+                # and set the burn feed on the first burn move instead.
+                if a.overscan:
+                    g.append(f"G1 X{num(grp[0][0])} S0 F{a.feed}")
+                for j, (s, e) in enumerate(grp):
+                    if j:
+                        g.append(f"G1 X{num(s)} S0")
+                    feed = f" F{a.feed}" if j == 0 and not a.overscan else ""
+                    g.append(f"G1 X{num(e)} S{a.power}{feed}")
+                end = num(grp[-1][1] + d * a.overscan)
+                if a.overscan:
+                    g.append(f"G1 X{end} S0")
+                pos = (end, num(y))
 
-        forward = not forward
+            forward = not forward
 
     g += [f"G1 X0 Y0 S0 F{a.travel}", "M5", "M2"]
     return g, burned_lines, width, height
@@ -132,6 +142,8 @@ def main():
     p.add_argument("--power", type=int, default=1000, help="laser S value while burning (default 1000, GRBL $30)")
     p.add_argument("--feed", type=int, default=1000, help="burn feed mm/min (default 1000)")
     p.add_argument("--travel", type=int, default=3000, help="travel feed mm/min between burns (default 3000)")
+    p.add_argument("--line-repeat", type=int, default=3,
+                   help="burn each line N times, back and forth (default 3)")
     p.add_argument("--m3", action="store_true",
                    help="constant power M3 instead of dynamic M4 (M4 scales power with speed)")
     p.add_argument("--overscan", type=float, default=2.0, help="mm of laser-off run-up on each side (default 2)")
@@ -139,6 +151,8 @@ def main():
 
     if a.line_pitch <= 0 or a.feed <= 0 or a.power < 0 or a.overscan < 0:
         die("line pitch and feed must be > 0, power and overscan >= 0")
+    if a.line_repeat < 1:
+        die("line repeat must be >= 1")
     if (a.width is not None and a.width <= 0) or (a.dpi is not None and a.dpi <= 0):
         die("width and dpi must be > 0")
 

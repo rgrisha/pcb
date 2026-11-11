@@ -32,7 +32,7 @@ def image(*specs):
 
 def args(**kw):
     a = dict(input="test.png", invert=False, line_pitch=1.0, power=1000, feed=1000,
-             travel=3000, overscan=2.0, m3=False)
+             travel=3000, overscan=2.0, m3=False, line_repeat=1)
     a.update(kw)
     return Namespace(**a)
 
@@ -159,6 +159,86 @@ def test_same_feed_travel_with_overscan():
         "G1 X12 S0",
     ]
 
+
+
+def test_line_repeat_goes_back_and_forth_without_travel():
+    assert gcode("1b3w", line_repeat=3) == [
+        "G1 X-1 Y0.5 S0 F3000",
+        "G1 X1 S0 F1000",           # pass 1, left to right
+        "G1 X4 S1000",
+        "G1 X6 S0",
+        "G1 X4 S0 F1000",           # pass 2, right to left, no travel needed
+        "G1 X1 S1000",
+        "G1 X-1 S0",
+        "G1 X1 S0 F1000",           # pass 3, left to right
+        "G1 X4 S1000",
+        "G1 X6 S0",
+    ]
+
+
+def test_line_repeat_with_long_gap_travels_inside_pass():
+    assert gcode("4b5w6b7w", line_repeat=2) == [
+        "G1 X2 Y0.5 S0 F3000",
+        "G1 X4 S0 F1000",
+        "G1 X9 S1000",
+        "G1 X11 S0",
+        "G1 X13 Y0.5 S0 F3000",
+        "G1 X15 S0 F1000",
+        "G1 X22 S1000",
+        "G1 X24 S0",
+        "G1 X22 S0 F1000",          # pass 2 starts where pass 1 ended
+        "G1 X15 S1000",
+        "G1 X13 S0",
+        "G1 X11 Y0.5 S0 F3000",
+        "G1 X9 S0 F1000",
+        "G1 X4 S1000",
+        "G1 X2 S0",
+    ]
+
+
+def test_even_line_repeat_next_line_starts_same_side():
+    assert gcode("2w", "2w", line_repeat=2) == [
+        "G1 X-2 Y0.5 S0 F3000",
+        "G1 X0 S0 F1000",
+        "G1 X2 S1000",
+        "G1 X4 S0",
+        "G1 X2 S0 F1000",
+        "G1 X0 S1000",
+        "G1 X-2 S0",
+        "G1 X-2 Y1.5 S0 F3000",     # next line, left to right again
+        "G1 X0 S0 F1000",
+        "G1 X2 S1000",
+        "G1 X4 S0",
+        "G1 X2 S0 F1000",
+        "G1 X0 S1000",
+        "G1 X-2 S0",
+    ]
+
+
+def test_line_repeat_without_overscan():
+    assert gcode("1b2w", line_repeat=2, overscan=0) == [
+        "G1 X1 Y0.5 S0 F3000",
+        "G1 X3 S1000 F1000",
+        "G1 X1 S1000 F1000",
+    ]
+
+
+def test_line_repeat_must_be_positive(tmp_path, monkeypatch, capsys):
+    path = save(tmp_path, image("2w"), dpi=(254, 254))
+    monkeypatch.setattr("sys.argv", ["png2gcode", path, "--line-repeat", "0"])
+    with pytest.raises(SystemExit) as e:
+        png2gcode.main()
+    assert e.value.code == 1
+    assert "line repeat" in capsys.readouterr().err
+
+
+def test_line_repeat_default_is_3(tmp_path, monkeypatch, capsys):
+    path = save(tmp_path, image("2w"), dpi=(254, 254))
+    monkeypatch.setattr("sys.argv", ["png2gcode", path])
+    png2gcode.main()
+    out = capsys.readouterr().out
+    assert "line repeat 3" in out
+    assert len([l for l in out.splitlines() if l.startswith("G1") and l.endswith(" S1000")]) == 3
 
 
 def test_line_pitch_samples_rows():
